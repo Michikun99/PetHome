@@ -57,7 +57,6 @@ app.post('/register', async (req, res) => {
         
         db.query(sql, [usuario, nombre, correo, hashedPassword, telefono], (err) => {
             if (err) {
-                // ✨ AQUÍ ESTÁ EL MICRÓFONO PARA SACAR EL CHISME ✨
                 console.error('🚨 CHISME DE MYSQL:', err.sqlMessage);
                 return res.status(400).json({ mensaje: 'Error al registrar', detalle: err.sqlMessage });
             }
@@ -163,9 +162,12 @@ app.post('/verificacion_ine', upload.fields([{ name: 'ine_frontal', maxCount: 1 
         console.error("Error en IA:", error);
     }
 
-    const lat = latitud || 0; const lng = longitud || 0;
+    const lat = latitud || 0; 
+    const lng = longitud || 0;
     const sql = `INSERT INTO T_Direccionusuario (ID_Usuario, Calle, num_exterior, num_interior, colonia, codigopostal, ciudad, estado, clave_ine, ine_foto_frontal_url, ine_foto_trasera_url, ubicacion_exacta, is_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText(?, 4326), ?)`;
-    const values = [id_usuario, calle, num_exterior, num_interior || null, colonia, codigopostal, ciudad, estado, clave_ine, `/uploads/${ine_frontal.filename}`, `/uploads/${ine_trasera.filename}`, `POINT(${lng} ${lat})`, esValida];
+    
+    // ✨ CORRECCIÓN DE COORDENADAS: Primero la Latitud, luego la Longitud
+    const values = [id_usuario, calle, num_exterior, num_interior || null, colonia, codigopostal, ciudad, estado, clave_ine, `/uploads/${ine_frontal.filename}`, `/uploads/${ine_trasera.filename}`, `POINT(${lat} ${lng})`, esValida];
 
     db.query(sql, values, (err) => {
         if (err) {
