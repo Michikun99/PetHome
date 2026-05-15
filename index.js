@@ -331,4 +331,5 @@ app.get('/chats_activos', (req, res) => {
     db.query(`SELECT c.ID_Chat, u.ID_Usuario AS contacto_id, u.Nombre AS contacto_nombre, m.contenido AS ultimo_mensaje, m.archivo_url, m.fechadeenvio, (SELECT COUNT(*) FROM T_Mensajes m2 WHERE m2.ID_Chat = c.ID_Chat AND m2.ID_Usuario = u.ID_Usuario AND m2.leido = FALSE) AS mensajes_sin_leer FROM T_Chats c JOIN T_Usuario u ON (u.ID_Usuario = c.ID_Usuario1 OR u.ID_Usuario = c.ID_Usuario2) AND u.ID_Usuario != ? LEFT JOIN T_Mensajes m ON m.ID_Mensajes = (SELECT MAX(ID_Mensajes) FROM T_Mensajes WHERE ID_Chat = c.ID_Chat) WHERE (c.ID_Usuario1 = ? OR c.ID_Usuario2 = ?) AND m.ID_Mensajes IS NOT NULL ORDER BY m.fechadeenvio DESC`, [mi_id, mi_id, mi_id], (err, results) => res.json(results));
 });
 
-app.listen(3000, () => console.log('🚀 Backend PetHome en puerto 3000'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Backend PetHome corriendo en puerto ${PORT}`));
