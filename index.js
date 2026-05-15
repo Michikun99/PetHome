@@ -145,15 +145,14 @@ app.post('/verificacion_ine', upload.fields([{ name: 'ine_frontal', maxCount: 1 
     const frontPath = path.join(__dirname, 'uploads', ine_frontal.filename);
     
     // ✨ MAGIA DE LA IA (OCR) ✨
-    let esValida = 0; // Por defecto no validado
+    let esValida = 0;
     try {
         console.log("🤖 Iniciando análisis IA de la INE...");
         const result = await Tesseract.recognize(frontPath, 'spa');
         const textoDetectado = result.data.text.toUpperCase();
         
-        // Buscamos palabras clave de una INE mexicana
         if (textoDetectado.includes('ELECTORAL') || textoDetectado.includes('CREDENCIAL') || textoDetectado.includes('MEXICO')) {
-            esValida = 1; // ¡Aprobado automáticamente por la IA!
+            esValida = 1; 
             console.log("✅ IA: INE detectada como válida.");
         } else {
             console.log("⚠️ IA: No se detectó texto oficial, enviada a revisión manual.");
@@ -166,7 +165,6 @@ app.post('/verificacion_ine', upload.fields([{ name: 'ine_frontal', maxCount: 1 
     const lng = longitud || 0;
     const sql = `INSERT INTO T_Direccionusuario (ID_Usuario, Calle, num_exterior, num_interior, colonia, codigopostal, ciudad, estado, clave_ine, ine_foto_frontal_url, ine_foto_trasera_url, ubicacion_exacta, is_verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromText(?, 4326), ?)`;
     
-    // ✨ CORRECCIÓN DE COORDENADAS: Primero la Latitud, luego la Longitud
     const values = [id_usuario, calle, num_exterior, num_interior || null, colonia, codigopostal, ciudad, estado, clave_ine, `/uploads/${ine_frontal.filename}`, `/uploads/${ine_trasera.filename}`, `POINT(${lat} ${lng})`, esValida];
 
     db.query(sql, values, (err) => {
@@ -199,7 +197,7 @@ app.get('/publicaciones', (req, res) => {
 
     let sql = `
         SELECT p.*, ST_X(p.localizacion) AS latitud, ST_Y(p.localizacion) AS longitud,
-               u.Nombre AS autor_nombre, i.imagen_url,
+               u.Nombre AS autor_nombre, u.Fotodeperfil_url, i.imagen_url,
                EXISTS(SELECT 1 FROM T_Postlikes WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_dado_like,
                EXISTS(SELECT 1 FROM T_Postguardados WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_guardado
         FROM T_Posts p
@@ -227,13 +225,13 @@ app.get('/publicaciones', (req, res) => {
 
 app.get('/mis_publicaciones/:id', (req, res) => {
     const idUsuario = req.params.id;
-    const sql = `SELECT p.*, ST_X(p.localizacion) AS latitud, ST_Y(p.localizacion) AS longitud, u.Nombre AS autor_nombre, i.imagen_url, EXISTS(SELECT 1 FROM T_Postlikes WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_dado_like, EXISTS(SELECT 1 FROM T_Postguardados WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_guardado FROM T_Posts p INNER JOIN T_Usuario u ON p.ID_Usuario = u.ID_Usuario LEFT JOIN T_Imagenesdepost i ON p.ID_Post = i.ID_Post AND i.imagenprimaria = 1 WHERE p.ID_Usuario = ? ORDER BY p.fechadepublicacion DESC`;
+    const sql = `SELECT p.*, ST_X(p.localizacion) AS latitud, ST_Y(p.localizacion) AS longitud, u.Nombre AS autor_nombre, u.Fotodeperfil_url, i.imagen_url, EXISTS(SELECT 1 FROM T_Postlikes WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_dado_like, EXISTS(SELECT 1 FROM T_Postguardados WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_guardado FROM T_Posts p INNER JOIN T_Usuario u ON p.ID_Usuario = u.ID_Usuario LEFT JOIN T_Imagenesdepost i ON p.ID_Post = i.ID_Post AND i.imagenprimaria = 1 WHERE p.ID_Usuario = ? ORDER BY p.fechadepublicacion DESC`;
     db.query(sql, [idUsuario, idUsuario, idUsuario], (err, results) => res.json(results));
 });
 
 app.get('/publicaciones_guardadas/:id', (req, res) => {
     const idUsuario = req.params.id;
-    const sql = `SELECT p.*, ST_X(p.localizacion) AS latitud, ST_Y(p.localizacion) AS longitud, u.Nombre AS autor_nombre, i.imagen_url, EXISTS(SELECT 1 FROM T_Postlikes WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_dado_like, 1 AS ha_guardado FROM T_Postguardados g INNER JOIN T_Posts p ON g.ID_Post = p.ID_Post INNER JOIN T_Usuario u ON p.ID_Usuario = u.ID_Usuario LEFT JOIN T_Imagenesdepost i ON p.ID_Post = i.ID_Post AND i.imagenprimaria = 1 WHERE g.ID_Usuario = ? ORDER BY g.saved_at DESC`;
+    const sql = `SELECT p.*, ST_X(p.localizacion) AS latitud, ST_Y(p.localizacion) AS longitud, u.Nombre AS autor_nombre, u.Fotodeperfil_url, i.imagen_url, EXISTS(SELECT 1 FROM T_Postlikes WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_dado_like, 1 AS ha_guardado FROM T_Postguardados g INNER JOIN T_Posts p ON g.ID_Post = p.ID_Post INNER JOIN T_Usuario u ON p.ID_Usuario = u.ID_Usuario LEFT JOIN T_Imagenesdepost i ON p.ID_Post = i.ID_Post AND i.imagenprimaria = 1 WHERE g.ID_Usuario = ? ORDER BY g.saved_at DESC`;
     db.query(sql, [idUsuario, idUsuario], (err, results) => res.json(results));
 });
 
