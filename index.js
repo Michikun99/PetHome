@@ -24,7 +24,6 @@ app.use('/uploads', express.static('uploads'));
 // ==========================================
 // 🚀 CONEXIÓN A LA BASE DE DATOS (NUBE)
 // ==========================================
-// Usamos createPool para mantener la conexión viva en Railway
 const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,
@@ -36,7 +35,6 @@ const db = mysql.createPool({
     queueLimit: 0
 });
 
-// Verificamos la conexión al iniciar
 db.getConnection((err, connection) => {
     if (err) {
         console.error('❌ Error BD:', err.message);
@@ -56,11 +54,19 @@ app.post('/register', async (req, res) => {
     try {
         const hashedPassword = await bcrypt.hash(password, 10);
         const sql = `INSERT INTO T_Usuario (Usuario, Nombre, Correo, Contraseña, Telefono) VALUES (?, ?, ?, ?, ?)`;
+        
         db.query(sql, [usuario, nombre, correo, hashedPassword, telefono], (err) => {
-            if (err) return res.status(400).json({ mensaje: 'Error al registrar' });
+            if (err) {
+                // ✨ AQUÍ ESTÁ EL MICRÓFONO PARA SACAR EL CHISME ✨
+                console.error('🚨 CHISME DE MYSQL:', err.sqlMessage);
+                return res.status(400).json({ mensaje: 'Error al registrar', detalle: err.sqlMessage });
+            }
             res.status(201).json({ mensaje: 'Registrado' });
         });
-    } catch (e) { res.status(500).send(); }
+    } catch (e) { 
+        console.error('🚨 ERROR INTERNO:', e);
+        res.status(500).json({ mensaje: 'Error interno', detalle: e.toString() }); 
+    }
 });
 
 app.post('/login', (req, res) => {
