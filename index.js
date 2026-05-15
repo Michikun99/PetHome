@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const Tesseract = require('tesseract.js'); // ✨ NUEVO: Inteligencia Artificial OCR
+const Tesseract = require('tesseract.js'); // ✨ Inteligencia Artificial OCR
 
 const app = express();
 app.use(cors());
@@ -21,22 +21,36 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 app.use('/uploads', express.static('uploads'));
 
-const db = mysql.createConnection({
-    host: 'ballast.proxy.rlwy.net',
-    user: 'root',
-    password: 'LjCFRoWWKuILeCTjxMvTIuyfjKdjCjWl',
-    database: 'railway',
-    port: 24923
+// ==========================================
+// 🚀 CONEXIÓN A LA BASE DE DATOS (NUBE)
+// ==========================================
+// Usamos createPool para mantener la conexión viva en Railway
+const db = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: process.env.DB_PORT,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 });
 
-db.connect((err) => {
-    if (err) return console.error('❌ Error BD:', err.message);
-    console.log('✅ PetHome Conectado a Railway (IA y Restricciones Activas)');
+// Verificamos la conexión al iniciar
+db.getConnection((err, connection) => {
+    if (err) {
+        console.error('❌ Error BD:', err.message);
+    } else {
+        console.log('✅ PetHome Conectado a Railway (Pool Seguro e IA Activa)');
+        connection.release();
+    }
 });
 
 const SECRET_KEY = "pethome_clave_super_secreta";
 
-// --- SESIÓN ---
+// ==========================================
+// 👤 SESIÓN (LOGIN Y REGISTRO)
+// ==========================================
 app.post('/register', async (req, res) => {
     const { usuario, nombre, correo, password, telefono } = req.body;
     try {
@@ -60,7 +74,9 @@ app.post('/login', (req, res) => {
     });
 });
 
-// --- PERFIL ---
+// ==========================================
+// 🖼️ PERFIL DE USUARIO
+// ==========================================
 app.get('/perfil/:id', (req, res) => {
     const query = "SELECT Nombre as nombre, Usuario as usuario, Fotodeperfil_url as foto_perfil FROM T_Usuario WHERE ID_Usuario = ?";
     db.query(query, [req.params.id], (err, results) => {
@@ -154,7 +170,9 @@ app.post('/verificacion_ine', upload.fields([{ name: 'ine_frontal', maxCount: 1 
     });
 });
 
-// --- PUBLICACIONES ---
+// ==========================================
+// 🐾 PUBLICACIONES
+// ==========================================
 app.post('/publicaciones', upload.single('foto'), (req, res) => {
     const { id_usuario, tipo_post, descripcion, nombre_mascota, raza, latitud, longitud } = req.body;
     const foto = req.file;
@@ -224,7 +242,9 @@ app.put('/publicaciones/:id', (req, res) => {
     db.query('UPDATE T_Posts SET tipo_post = ?, descripcion = ?, nombre_mascota = ?, raza = ? WHERE ID_Post = ?', [tipo_post, descripcion, nombre_mascota, raza, req.params.id], (err) => res.json({ success: true }));
 });
 
-// --- INTERACCIONES ---
+// ==========================================
+// ❤️ INTERACCIONES
+// ==========================================
 app.post('/like', (req, res) => {
     const { id_usuario, id_post } = req.body;
     db.query('SELECT * FROM T_Postlikes WHERE ID_Usuario = ? AND ID_Post = ?', [id_usuario, id_post], (err, results) => {
@@ -258,7 +278,9 @@ app.post('/ocultar_post', (req, res) => {
     db.query('INSERT IGNORE INTO T_Postocultados (ID_Usuario, ID_Post) VALUES (?, ?)', [id_usuario, id_post], (err) => res.json({ success: true }));
 });
 
-// --- COMENTARIOS Y CHAT ---
+// ==========================================
+// 💬 COMENTARIOS Y CHAT
+// ==========================================
 app.get('/comentarios/:id_post', (req, res) => {
     const idUsuario = req.query.id_usuario || 0;
     const sql = `SELECT c.*, u.Nombre, EXISTS(SELECT 1 FROM T_Likesdecomentarios WHERE ID_Comentario = c.ID_Comentario AND ID_Usuario = ?) AS ha_dado_like FROM T_Comentarios c JOIN T_Usuario u ON c.ID_Usuario = u.ID_Usuario WHERE c.ID_Post = ? ORDER BY c.fecha DESC`;
@@ -331,5 +353,8 @@ app.get('/chats_activos', (req, res) => {
     db.query(`SELECT c.ID_Chat, u.ID_Usuario AS contacto_id, u.Nombre AS contacto_nombre, m.contenido AS ultimo_mensaje, m.archivo_url, m.fechadeenvio, (SELECT COUNT(*) FROM T_Mensajes m2 WHERE m2.ID_Chat = c.ID_Chat AND m2.ID_Usuario = u.ID_Usuario AND m2.leido = FALSE) AS mensajes_sin_leer FROM T_Chats c JOIN T_Usuario u ON (u.ID_Usuario = c.ID_Usuario1 OR u.ID_Usuario = c.ID_Usuario2) AND u.ID_Usuario != ? LEFT JOIN T_Mensajes m ON m.ID_Mensajes = (SELECT MAX(ID_Mensajes) FROM T_Mensajes WHERE ID_Chat = c.ID_Chat) WHERE (c.ID_Usuario1 = ? OR c.ID_Usuario2 = ?) AND m.ID_Mensajes IS NOT NULL ORDER BY m.fechadeenvio DESC`, [mi_id, mi_id, mi_id], (err, results) => res.json(results));
 });
 
+// ==========================================
+// 🚀 INICIO DEL SERVIDOR
+// ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Backend PetHome corriendo en puerto ${PORT}`));
