@@ -36,13 +36,33 @@ db.getConnection((err, connection) => {
     if (err) {
         console.error('❌ Error BD:', err.message);
     } else {
-        console.log('✅ PetHome Conectado a Railway (Pool Seguro e IA Activa)');
+        console.log('✅ PetHome Conectado a Railway (Pool Seguro)');
+        
+        // 🔥 MAGIA: Creamos la tabla de Notificaciones solita si no existe
+        const sqlCrearTabla = `
+            CREATE TABLE IF NOT EXISTS T_Notificaciones (
+                ID_Notificacion INT AUTO_INCREMENT PRIMARY KEY,
+                ID_Usuario INT NOT NULL,
+                tipo VARCHAR(50), 
+                mensaje VARCHAR(255),
+                leido BOOLEAN DEFAULT FALSE,
+                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `;
+        connection.query(sqlCrearTabla, (err) => {
+            if(err) console.log("⚠️ Error verificando tabla notificaciones:", err.message);
+            else console.log("✅ Tabla de Notificaciones lista para usarse");
+        });
+
         connection.release();
     }
 });
 
 const SECRET_KEY = "pethome_clave_super_secreta";
 
+// ==========================================
+// SESIÓN Y REGISTRO
+// ==========================================
 app.post('/register', async (req, res) => {
     const { usuario, nombre, correo, password, telefono } = req.body;
     try {
@@ -51,7 +71,7 @@ app.post('/register', async (req, res) => {
         
         db.query(sql, [usuario, nombre, correo, hashedPassword, telefono], (err) => {
             if (err) {
-                console.error('🚨 CHISME DE MYSQL:', err.sqlMessage);
+                console.error('🚨 ERROR MYSQL:', err.sqlMessage);
                 return res.status(400).json({ mensaje: 'Error al registrar', detalle: err.sqlMessage });
             }
             res.status(201).json({ mensaje: 'Registrado' });
@@ -73,6 +93,9 @@ app.post('/login', (req, res) => {
     });
 });
 
+// ==========================================
+// PERFIL
+// ==========================================
 app.get('/perfil/:id', (req, res) => {
     const query = "SELECT Nombre as nombre, Usuario as usuario, Fotodeperfil_url as foto_perfil FROM T_Usuario WHERE ID_Usuario = ?";
     db.query(query, [req.params.id], (err, results) => {
@@ -113,6 +136,9 @@ app.post('/perfil/foto', upload.single('foto'), (req, res) => {
     });
 });
 
+// ==========================================
+// VERIFICACIÓN (INE / TESSERACT)
+// ==========================================
 app.get('/estado_verificacion/:id_usuario', (req, res) => {
     const idUsuario = req.params.id_usuario;
     db.query(`SELECT is_verified FROM T_Direccionusuario WHERE ID_Usuario = ?`, [idUsuario], (err, results) => {
@@ -163,13 +189,32 @@ app.post('/verificacion_ine', upload.fields([{ name: 'ine_frontal', maxCount: 1 
     });
 });
 
+// ==========================================
+// PUBLICACIONES (CON ALERTAS POR CERCANÍA)
+// ==========================================
 app.post('/publicaciones', upload.single('foto'), (req, res) => {
     const { id_usuario, tipo_post, descripcion, nombre_mascota, raza, latitud, longitud } = req.body;
     const foto = req.file;
+    const lat = latitud || 0;
+    const lng = longitud || 0;
+    
     const sqlPost = `INSERT INTO T_Posts (ID_Usuario, tipo_post, descripcion, nombre_mascota, raza, localizacion) VALUES (?, ?, ?, ?, ?, ST_GeomFromText(?, 4326))`;
-    db.query(sqlPost, [id_usuario, tipo_post, descripcion, nombre_mascota, raza, `POINT(${latitud || 0} ${longitud || 0})`], (err, result) => {
+    db.query(sqlPost, [id_usuario, tipo_post, descripcion, nombre_mascota, raza, `POINT(${lat} ${lng})`], (err, result) => {
         if (err) return res.status(500).json({ error: err.sqlMessage });
+        
         if (foto) db.query(`INSERT INTO T_Imagenesdepost (ID_Post, imagen_url, imagenprimaria) VALUES (?, ?, ?)`, [result.insertId, `/uploads/${foto.filename}`, true]);
+        
+        // 🚀 NOTIFICAR A USUARIOS A MENOS DE 5 KM
+        if (lat != 0 && lng != 0) {
+            const sqlCerca = `
+                INSERT INTO T_Notificaciones (ID_Usuario, tipo, mensaje)
+                SELECT ID_Usuario, 'cerca', CONCAT('¡Un caso de mascota ', ?, ' cerca de ti!')
+                FROM T_Direccionusuario
+                WHERE ID_Usuario != ? AND ST_Distance_Sphere(ubicacion_exacta, ST_GeomFromText(?, 4326)) <= 5000
+            `;
+            db.query(sqlCerca, [tipo_post, id_usuario]);
+        }
+
         res.status(201).json({ mensaje: 'Publicado' });
     });
 });
@@ -201,22 +246,19 @@ app.get('/publicaciones', (req, res) => {
     }
     sql += ` ORDER BY p.fechadepublicacion DESC`;
 
-    db.query(sql, params, (err, results) => {
-        if (err) return res.status(500).json({ error: err.sqlMessage });
-        res.json(results);
-    });
+    db.query(sql, params, (err, results) => res.json(results || []));
 });
 
 app.get('/mis_publicaciones/:id', (req, res) => {
     const idUsuario = req.params.id;
     const sql = `SELECT p.*, ST_X(p.localizacion) AS latitud, ST_Y(p.localizacion) AS longitud, u.Nombre AS autor_nombre, u.Fotodeperfil_url, i.imagen_url, EXISTS(SELECT 1 FROM T_Postlikes WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_dado_like, EXISTS(SELECT 1 FROM T_Postguardados WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_guardado FROM T_Posts p INNER JOIN T_Usuario u ON p.ID_Usuario = u.ID_Usuario LEFT JOIN T_Imagenesdepost i ON p.ID_Post = i.ID_Post AND i.imagenprimaria = 1 WHERE p.ID_Usuario = ? ORDER BY p.fechadepublicacion DESC`;
-    db.query(sql, [idUsuario, idUsuario, idUsuario], (err, results) => res.json(results));
+    db.query(sql, [idUsuario, idUsuario, idUsuario], (err, results) => res.json(results || []));
 });
 
 app.get('/publicaciones_guardadas/:id', (req, res) => {
     const idUsuario = req.params.id;
     const sql = `SELECT p.*, ST_X(p.localizacion) AS latitud, ST_Y(p.localizacion) AS longitud, u.Nombre AS autor_nombre, u.Fotodeperfil_url, i.imagen_url, EXISTS(SELECT 1 FROM T_Postlikes WHERE ID_Post = p.ID_Post AND ID_Usuario = ?) AS ha_dado_like, 1 AS ha_guardado FROM T_Postguardados g INNER JOIN T_Posts p ON g.ID_Post = p.ID_Post INNER JOIN T_Usuario u ON p.ID_Usuario = u.ID_Usuario LEFT JOIN T_Imagenesdepost i ON p.ID_Post = i.ID_Post AND i.imagenprimaria = 1 WHERE g.ID_Usuario = ? ORDER BY g.saved_at DESC`;
-    db.query(sql, [idUsuario, idUsuario], (err, results) => res.json(results));
+    db.query(sql, [idUsuario, idUsuario], (err, results) => res.json(results || []));
 });
 
 app.delete('/publicaciones/:id', (req, res) => {
@@ -232,6 +274,9 @@ app.put('/publicaciones/:id', (req, res) => {
     db.query('UPDATE T_Posts SET tipo_post = ?, descripcion = ?, nombre_mascota = ?, raza = ? WHERE ID_Post = ?', [tipo_post, descripcion, nombre_mascota, raza, req.params.id], (err) => res.json({ success: true }));
 });
 
+// ==========================================
+// INTERACCIONES Y LIKES (CON NOTIFICACIÓN)
+// ==========================================
 app.post('/like', (req, res) => {
     const { id_usuario, id_post } = req.body;
     db.query('SELECT * FROM T_Postlikes WHERE ID_Usuario = ? AND ID_Post = ?', [id_usuario, id_post], (err, results) => {
@@ -243,6 +288,14 @@ app.post('/like', (req, res) => {
         } else {
             db.query('INSERT INTO T_Postlikes (ID_Usuario, ID_Post) VALUES (?, ?)', [id_usuario, id_post], () => {
                 db.query('UPDATE T_Posts SET cant_likes = cant_likes + 1 WHERE ID_Post = ?', [id_post]);
+                
+                // 🚀 NOTIFICAR AL DUEÑO DEL POST
+                db.query('SELECT ID_Usuario FROM T_Posts WHERE ID_Post = ?', [id_post], (err, postRes) => {
+                    if (postRes.length > 0 && postRes[0].ID_Usuario != id_usuario) {
+                        db.query(`INSERT INTO T_Notificaciones (ID_Usuario, tipo, mensaje) VALUES (?, 'like', 'A alguien le gustó tu publicación')`, [postRes[0].ID_Usuario]);
+                    }
+                });
+
                 res.json({ liked: true });
             });
         }
@@ -265,16 +318,29 @@ app.post('/ocultar_post', (req, res) => {
     db.query('INSERT IGNORE INTO T_Postocultados (ID_Usuario, ID_Post) VALUES (?, ?)', [id_usuario, id_post], (err) => res.json({ success: true }));
 });
 
+// ==========================================
+// COMENTARIOS (CON NOTIFICACIÓN)
+// ==========================================
 app.get('/comentarios/:id_post', (req, res) => {
     const idUsuario = req.query.id_usuario || 0;
     const sql = `SELECT c.*, u.Nombre, u.Fotodeperfil_url, EXISTS(SELECT 1 FROM T_Likesdecomentarios WHERE ID_Comentario = c.ID_Comentario AND ID_Usuario = ?) AS ha_dado_like FROM T_Comentarios c JOIN T_Usuario u ON c.ID_Usuario = u.ID_Usuario WHERE c.ID_Post = ? ORDER BY c.fecha DESC`;
-    db.query(sql, [idUsuario, req.params.id_post], (err, results) => res.json(results));
+    db.query(sql, [idUsuario, req.params.id_post], (err, results) => res.json(results || []));
 });
 
 app.post('/comentarios', (req, res) => {
     const { id_usuario, id_post, comentario } = req.body;
     db.query('INSERT INTO T_Comentarios (ID_Usuario, ID_Post, Comentario) VALUES (?, ?, ?)', [id_usuario, id_post, comentario], (err) => {
-        db.query('UPDATE T_Posts SET cant_comentarios = cant_comentarios + 1 WHERE ID_Post = ?', [id_post], () => res.json({ success: true }));
+        db.query('UPDATE T_Posts SET cant_comentarios = cant_comentarios + 1 WHERE ID_Post = ?', [id_post], () => {
+            
+            // 🚀 NOTIFICAR AL DUEÑO DEL POST
+            db.query('SELECT ID_Usuario FROM T_Posts WHERE ID_Post = ?', [id_post], (err, postRes) => {
+                if (postRes.length > 0 && postRes[0].ID_Usuario != id_usuario) {
+                    db.query(`INSERT INTO T_Notificaciones (ID_Usuario, tipo, mensaje) VALUES (?, 'comentario', 'Alguien comentó tu publicación')`, [postRes[0].ID_Usuario]);
+                }
+            });
+
+            res.json({ success: true });
+        });
     });
 });
 
@@ -295,6 +361,9 @@ app.post('/like_comentario', (req, res) => {
     });
 });
 
+// ==========================================
+// REPORTES
+// ==========================================
 app.post('/reportes', (req, res) => {
     const { id_usuario, id_post, id_comentario, reason, descripcion } = req.body;
     const postID = id_post ? id_post : null;
@@ -302,10 +371,19 @@ app.post('/reportes', (req, res) => {
     db.query(`INSERT INTO T_Reportes (ID_Usuario, ID_Post, ID_Comentario, reason, descripcion) VALUES (?, ?, ?, ?, ?)`, [id_usuario, postID, comentarioID, reason, descripcion], (err) => res.json({ success: true }));
 });
 
+// ==========================================
+// MENSAJES DIRECTOS (CON NOTIFICACIÓN)
+// ==========================================
 app.post('/mensajes', (req, res) => {
     const { id_remitente, id_destinatario, contenido } = req.body;
     db.query(`SELECT ID_Chat FROM T_Chats WHERE (ID_Usuario1 = ? AND ID_Usuario2 = ?) OR (ID_Usuario1 = ? AND ID_Usuario2 = ?)`, [id_remitente, id_destinatario, id_destinatario, id_remitente], (err, results) => {
-        const insertMsg = (chatId) => db.query(`INSERT INTO T_Mensajes (ID_Chat, ID_Usuario, contenido) VALUES (?, ?, ?)`, [chatId, id_remitente, contenido], () => res.json({ success: true }));
+        const insertMsg = (chatId) => {
+            db.query(`INSERT INTO T_Mensajes (ID_Chat, ID_Usuario, contenido) VALUES (?, ?, ?)`, [chatId, id_remitente, contenido], () => {
+                // 🚀 NOTIFICAR NUEVO MENSAJE AL DESTINATARIO
+                db.query(`INSERT INTO T_Notificaciones (ID_Usuario, tipo, mensaje) VALUES (?, 'mensaje', 'Tienes un nuevo mensaje')`, [id_destinatario]);
+                res.json({ success: true });
+            });
+        };
         if (results.length > 0) insertMsg(results[0].ID_Chat);
         else db.query(`INSERT INTO T_Chats (ID_Usuario1, ID_Usuario2) VALUES (?, ?)`, [id_remitente, id_destinatario], (err3, newChat) => insertMsg(newChat.insertId));
     });
@@ -315,7 +393,13 @@ app.post('/mensajes_imagen', upload.single('archivo'), (req, res) => {
     const { id_remitente, id_destinatario } = req.body;
     const archivo_url = req.file ? `/uploads/${req.file.filename}` : null;
     db.query(`SELECT ID_Chat FROM T_Chats WHERE (ID_Usuario1 = ? AND ID_Usuario2 = ?) OR (ID_Usuario1 = ? AND ID_Usuario2 = ?)`, [id_remitente, id_destinatario, id_destinatario, id_remitente], (err, results) => {
-        const insertMsg = (chatId) => db.query(`INSERT INTO T_Mensajes (ID_Chat, ID_Usuario, archivo_url, tipo_archivo) VALUES (?, ?, ?, 'imagen')`, [chatId, id_remitente, archivo_url], () => res.json({ success: true }));
+        const insertMsg = (chatId) => {
+            db.query(`INSERT INTO T_Mensajes (ID_Chat, ID_Usuario, archivo_url, tipo_archivo) VALUES (?, ?, ?, 'imagen')`, [chatId, id_remitente, archivo_url], () => {
+                // 🚀 NOTIFICAR NUEVA IMAGEN
+                db.query(`INSERT INTO T_Notificaciones (ID_Usuario, tipo, mensaje) VALUES (?, 'mensaje', 'Te han enviado una imagen')`, [id_destinatario]);
+                res.json({ success: true });
+            });
+        };
         if (results.length > 0) insertMsg(results[0].ID_Chat);
         else db.query(`INSERT INTO T_Chats (ID_Usuario1, ID_Usuario2) VALUES (?, ?)`, [id_remitente, id_destinatario], (err3, newChat) => insertMsg(newChat.insertId));
     });
@@ -324,7 +408,7 @@ app.post('/mensajes_imagen', upload.single('archivo'), (req, res) => {
 app.get('/mensajes/:contacto_id', (req, res) => {
     const mi_id = req.query.mi_id;
     const contacto_id = req.params.contacto_id;
-    db.query(`SELECT m.* FROM T_Mensajes m JOIN T_Chats c ON m.ID_Chat = c.ID_Chat WHERE (c.ID_Usuario1 = ? AND c.ID_Usuario2 = ?) OR (c.ID_Usuario1 = ? AND c.ID_Usuario2 = ?) ORDER BY m.fechadeenvio ASC`, [mi_id, contacto_id, contacto_id, mi_id], (err, results) => res.json(results));
+    db.query(`SELECT m.* FROM T_Mensajes m JOIN T_Chats c ON m.ID_Chat = c.ID_Chat WHERE (c.ID_Usuario1 = ? AND c.ID_Usuario2 = ?) OR (c.ID_Usuario1 = ? AND c.ID_Usuario2 = ?) ORDER BY m.fechadeenvio ASC`, [mi_id, contacto_id, contacto_id, mi_id], (err, results) => res.json(results || []));
 });
 
 app.put('/mensajes/leer', (req, res) => {
@@ -334,7 +418,32 @@ app.put('/mensajes/leer', (req, res) => {
 
 app.get('/chats_activos', (req, res) => {
     const mi_id = req.query.mi_id;
-    db.query(`SELECT c.ID_Chat, u.ID_Usuario AS contacto_id, u.Nombre AS contacto_nombre, m.contenido AS ultimo_mensaje, m.archivo_url, m.fechadeenvio, (SELECT COUNT(*) FROM T_Mensajes m2 WHERE m2.ID_Chat = c.ID_Chat AND m2.ID_Usuario = u.ID_Usuario AND m2.leido = FALSE) AS mensajes_sin_leer FROM T_Chats c JOIN T_Usuario u ON (u.ID_Usuario = c.ID_Usuario1 OR u.ID_Usuario = c.ID_Usuario2) AND u.ID_Usuario != ? LEFT JOIN T_Mensajes m ON m.ID_Mensajes = (SELECT MAX(ID_Mensajes) FROM T_Mensajes WHERE ID_Chat = c.ID_Chat) WHERE (c.ID_Usuario1 = ? OR c.ID_Usuario2 = ?) AND m.ID_Mensajes IS NOT NULL ORDER BY m.fechadeenvio DESC`, [mi_id, mi_id, mi_id], (err, results) => res.json(results));
+    db.query(`SELECT c.ID_Chat, u.ID_Usuario AS contacto_id, u.Nombre AS contacto_nombre, m.contenido AS ultimo_mensaje, m.archivo_url, m.fechadeenvio, (SELECT COUNT(*) FROM T_Mensajes m2 WHERE m2.ID_Chat = c.ID_Chat AND m2.ID_Usuario = u.ID_Usuario AND m2.leido = FALSE) AS mensajes_sin_leer FROM T_Chats c JOIN T_Usuario u ON (u.ID_Usuario = c.ID_Usuario1 OR u.ID_Usuario = c.ID_Usuario2) AND u.ID_Usuario != ? LEFT JOIN T_Mensajes m ON m.ID_Mensajes = (SELECT MAX(ID_Mensajes) FROM T_Mensajes WHERE ID_Chat = c.ID_Chat) WHERE (c.ID_Usuario1 = ? OR c.ID_Usuario2 = ?) AND m.ID_Mensajes IS NOT NULL ORDER BY m.fechadeenvio DESC`, [mi_id, mi_id, mi_id], (err, results) => res.json(results || []));
+});
+
+// ==========================================
+// ✨ ENDPOINTS EXCLUSIVOS DE NOTIFICACIONES ✨
+// ==========================================
+app.get('/notificaciones/:id_usuario', (req, res) => {
+    const idUsuario = req.params.id_usuario;
+    db.query(`SELECT * FROM T_Notificaciones WHERE ID_Usuario = ? ORDER BY fecha DESC LIMIT 50`, [idUsuario], (err, results) => {
+        if (err) {
+            console.error("Error obteniendo notificaciones:", err);
+            return res.status(500).json([]);
+        }
+        res.json(results || []);
+    });
+});
+
+app.put('/notificaciones/leer/:id_usuario', (req, res) => {
+    const idUsuario = req.params.id_usuario;
+    db.query(`UPDATE T_Notificaciones SET leido = TRUE WHERE ID_Usuario = ?`, [idUsuario], (err) => {
+        if (err) {
+            console.error("Error al marcar como leídas:", err);
+            return res.status(500).json({ success: false });
+        }
+        res.json({ success: true });
+    });
 });
 
 const PORT = process.env.PORT || 3000;
