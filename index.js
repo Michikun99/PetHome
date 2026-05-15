@@ -289,7 +289,8 @@ app.post('/ocultar_post', (req, res) => {
 // ==========================================
 app.get('/comentarios/:id_post', (req, res) => {
     const idUsuario = req.query.id_usuario || 0;
-    const sql = `SELECT c.*, u.Nombre, EXISTS(SELECT 1 FROM T_Likesdecomentarios WHERE ID_Comentario = c.ID_Comentario AND ID_Usuario = ?) AS ha_dado_like FROM T_Comentarios c JOIN T_Usuario u ON c.ID_Usuario = u.ID_Usuario WHERE c.ID_Post = ? ORDER BY c.fecha DESC`;
+    // ✨ AQUÍ AGREGUÉ u.Fotodeperfil_url PARA LOS COMENTARIOS
+    const sql = `SELECT c.*, u.Nombre, u.Fotodeperfil_url, EXISTS(SELECT 1 FROM T_Likesdecomentarios WHERE ID_Comentario = c.ID_Comentario AND ID_Usuario = ?) AS ha_dado_like FROM T_Comentarios c JOIN T_Usuario u ON c.ID_Usuario = u.ID_Usuario WHERE c.ID_Post = ? ORDER BY c.fecha DESC`;
     db.query(sql, [idUsuario, req.params.id_post], (err, results) => res.json(results));
 });
 
